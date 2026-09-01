@@ -1,0 +1,43 @@
+# config/sessions.yaml
+# --------------------
+# Trading session windows in UTC. Adjust for DST changes by updating
+# these values — do not hardcode them in application logic.
+
+sessions:
+  sydney:
+    open: "22:00"   # previous day UTC
+    close: "07:00"
+    volatility: low
+
+  tokyo:
+    open: "00:00"
+    close: "09:00"
+    volatility: medium
+
+  london:
+    open: "08:00"
+    close: "17:00"
+    volatility: high
+
+  new_york:
+    open: "13:00"
+    close: "22:00"
+    volatility: high
+
+overlaps:
+  london_new_york:
+    open: "13:00"
+    close: "17:00"
+    volatility: very_high   # highest liquidity window for majors
+
+  tokyo_london:
+    open: "08:00"
+    close: "09:00"
+    volatility: medium
+
+# Windows to avoid trading (e.g. low-liquidity dead zones, news events).
+# Leave empty to disable. Format: "HH:MM-HH:MM" UTC
+avoid_trading_windows: []
+# Example:
+# avoid_trading_windows:
+#   - "21:30-22:30"   # NY close to Sydney open dead zone

@@ -1,0 +1,59 @@
+# config/instruments.yaml
+# -----------------------
+# Defines which symbols the bot trades and their per-symbol parameters.
+# Set enabled: false to exclude a symbol without removing it from config.
+
+instruments:
+  - symbol: EURUSD
+    type: forex
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 10.0
+    lot_step: 0.01
+    enabled: true
+    risk_multiplier: 1.0    # scale risk_per_trade_pct for this symbol
+
+  - symbol: GBPUSD
+    type: forex
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 10.0
+    lot_step: 0.01
+    enabled: true
+    risk_multiplier: 1.0
+
+  - symbol: USDJPY
+    type: forex
+    pip_size: 0.01
+    min_lot: 0.01
+    max_lot: 10.0
+    lot_step: 0.01
+    enabled: true
+    risk_multiplier: 1.0
+
+  - symbol: AUDUSD
+    type: forex
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 10.0
+    lot_step: 0.01
+    enabled: true
+    risk_multiplier: 0.9
+
+  - symbol: BTCUSD
+    type: crypto
+    pip_size: 1.0           # crypto uses dollar increments, not pips
+    min_lot: 0.01
+    max_lot: 1.0
+    lot_step: 0.01
+    enabled: false          # disabled by default — enable after demo testing
+    risk_multiplier: 0.5    # lower risk on volatile crypto
+
+  - symbol: ETHUSD
+    type: crypto
+    pip_size: 0.01
+    min_lot: 0.01
+    max_lot: 5.0
+    lot_step: 0.01
+    enabled: false
+    risk_multiplier: 0.5

@@ -59,6 +59,16 @@ config validation, `loguru` or standard `logging` for logs.
    before enabling live trading, that automated trading can result in real
    monetary losses and that the user is responsible for testing thoroughly
    on demo/backtest before going live.
+6. **Log every task prompt before implementation.** Before writing any
+   code or making any file changes for a given task, the agent must save
+   the exact user prompt (and any clarifying context) as a Markdown file
+   in the `prompts/` folder at the project root. File naming convention:
+   `prompts/YYYY-MM-DD_HH-MM_<short-slug>.md`. Each file must include:
+   - The original user prompt (verbatim).
+   - Any clarifying questions asked and answers received.
+   - A brief statement of what the agent intends to implement.
+   This creates an auditable record of every change decision and why it
+   was made. Never skip this step, even for small changes.
 
 ---
 
@@ -70,6 +80,7 @@ trading_bot/
 ├── README.md
 ├── .env.example
 ├── pyproject.toml / requirements.txt
+├── prompts/                     # one .md file per task, written BEFORE implementation
 ├── config/
 │   ├── settings.py          # pydantic-based config loader
 │   ├── instruments.yaml     # symbols traded (forex pairs, crypto pairs), per-symbol overrides
