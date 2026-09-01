@@ -1,0 +1,47 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local wine/environment configuration
+scripts/.wine_python_path
+
+# Build / dist
+dist/
+build/
+*.egg-info/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Data cache
+data/cache/*.parquet
+data/cache/*.csv
+
+# Logs & journal
+logs/*.log
+logs/*.csv
+
+# ML registry (large binary files)
+ml/registry/*.pkl
+ml/registry/*.joblib
+
+# OS
+.DS_Store
+Thumbs.db
