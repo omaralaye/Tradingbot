@@ -182,6 +182,7 @@ trading_bot/
 │       └── support_resistance.py    # Swing point clustering for S/R zones
 │
 ├── ml/                      # Machine Learning pipeline
+│   ├── online_learner.py    # Online continuous learning & real-time adaptive feedback brain
 │   ├── features.py          # Lookahead-free feature engineering
 │   ├── labeling.py          # Triple-barrier and forward return labeling
 │   ├── train.py             # Purged/embargoed walk-forward cross-validation
@@ -218,6 +219,7 @@ trading_bot/
 │   └── test_connection.py     # Validates bridge, MT5 login, and symbol quotes
 │
 ├── tests/                   # Automated unit & integration tests
+│   ├── test_online_learner.py
 │   ├── test_order_manager.py
 │   ├── test_position_sizing.py
 │   ├── test_regime_detection.py
@@ -369,19 +371,34 @@ python -m live.run_bot
 **Loop Cycle Workflow:**
 1. Verifies connection to MT5 and checks account equity.
 2. Checks kill-switch and active daily drawdown limits.
-3. Iterates across all active instruments defined in `config/instruments.yaml`.
-4. Fetches multi-timeframe OHLCV data (`M15`, `H1`, `H4`, `D1`).
-5. Analyzes market regime, S/R zones, chart/candlestick patterns, and session windows.
-6. Evaluates ML model probabilities.
-7. Evaluates confidence score against `MIN_SIGNAL_CONFIDENCE`.
-8. Applies risk gatekeeper rules (position limits, correlation limits).
-9. Calculates ATR-based SL/TP and exact lot size based on `RISK_PER_TRADE_PCT`.
-10. Transmits market order with retry logic and logs full details to `logs/trade_journal.csv`.
-11. Sleeps until next cycle (default 60 seconds).
+3. **Closed-Deal Synchronization:** Queries MT5 deal history for newly closed positions, records realized PnL in `logs/trade_journal.csv`, and feeds results into `OnlineAdaptiveLearner`.
+4. Iterates across all active instruments defined in `config/instruments.yaml`.
+5. Fetches multi-timeframe OHLCV data (`M15`, `H1`, `H4`, `D1`).
+6. Analyzes market regime, S/R zones, chart/candlestick patterns, and session windows.
+7. Evaluates ML model probabilities and computes composite confidence score.
+8. **Online Adaptive Gate:** Queries `OnlineAdaptiveLearner.evaluate_setup()` — vetoes quarantined setups, applies Bayesian win rate penalties, and boosts high-performing setups.
+9. Applies risk gatekeeper rules (symbol cooldowns, position limits, correlation limits).
+10. Calculates ATR-based SL/TP with minimum pip floor and exact lot size based on `RISK_PER_TRADE_PCT`.
+11. Transmits market order with retry logic, registers cooldown, and logs full details to `logs/trade_journal.csv`.
+12. Sleeps until next cycle (default 60 seconds).
 
 ---
 
-### 3. Enabling Live Trading
+### 3. Online Continuous Learning & Adaptive Gating
+
+The bot includes an autonomous real-time feedback loop (`ml/online_learner.py`) that learns dynamically from every live trade outcome without requiring manual code changes or full offline retrains:
+
+- **Dynamic Setup Memory & Bayesian Beta Scoring:** Tracks historical win rates, consecutive losses, and realized dollar returns for every setup fingerprint (`Symbol + Direction + H4 Trend + Session + Pattern`).
+- **Automatic Quarantine Circuit Breaker:** Any setup suffering repeated losses (configurable via `QUARANTINE_LOSS_STREAK=2`) is automatically quarantined for a cooldown window (`QUARANTINE_DURATION_SECONDS=14400` / 4 hours).
+- **Online Incremental Classifier:** Uses `SGDClassifier(loss="log_loss")` with `partial_fit()` to dynamically shift decision boundaries in real time upon trade close.
+- **Cold-Start Historical Bootstrap:** On initial startup, the learner automatically replays closed trades from MT5 deal history and `trade_journal.csv` into memory (`logs/online_memory.json`).
+- **Algorithmic Guards:**
+  - **Symbol Cooldown:** Prevents rapid duplicate entries on the same instrument within 30 minutes (`SYMBOL_COOLDOWN_SECONDS=1800`).
+  - **Minimum SL Distance Floor:** Enforces a minimum stop-loss floor (`MIN_STOP_LOSS_PIPS=12.0`) to avoid instant spread stop-outs during quiet market sessions.
+
+---
+
+### 4. Enabling Live Trading
 
 > [!WARNING]
 > Only switch to live trading after extensive demo evaluation. Real capital will be committed.
@@ -400,7 +417,7 @@ The bot will print a prominent high-visibility warning in the terminal and logs 
 
 ---
 
-### 4. Running Historical Backtests
+### 5. Running Historical Backtests
 
 The backtesting engine (`backtest/engine.py`) simulates execution bar-by-bar using historical data without placing live orders:
 
@@ -455,7 +472,7 @@ print(reporter.text_report())
 
 ---
 
-### 5. Training & Evaluating ML Models
+### 6. Training & Evaluating ML Models
 
 The machine learning pipeline implements purged and embargoed Walk-Forward Cross-Validation to eliminate lookahead bias:
 
@@ -489,7 +506,7 @@ Approved models and their metadata (training dates, feature names, out-of-sample
 
 ---
 
-### 6. Running Unit & Integration Tests
+### 7. Running Unit & Integration Tests
 
 The test suite validates position sizing formulas, regime detection thresholds, order proxying, and risk management limits:
 
@@ -527,6 +544,12 @@ make test-cov
 | `MIN_TIMEFRAME_AGREEMENT` | `int` | `2` | Number of timeframes that must align |
 | `LOG_LEVEL` | `str` | `"INFO"` | Console log verbosity (`DEBUG`, `INFO`, `WARNING`) |
 | `LOG_DIR` | `str` | `"logs"` | Directory for log files and trade journals |
+| `ENABLE_ONLINE_LEARNING` | `bool` | `true` | Real-time adaptive feedback & setup memory loop |
+| `ONLINE_MEMORY_PATH` | `str` | `"logs/online_memory.json"` | Path to persistent online learning state |
+| `SYMBOL_COOLDOWN_SECONDS` | `int` | `1800` | Cooldown interval between orders on the same symbol |
+| `MIN_STOP_LOSS_PIPS` | `float` | `12.0` | Minimum SL distance floor to prevent chop stop-outs |
+| `QUARANTINE_LOSS_STREAK` | `int` | `2` | Consecutive losses on a setup to trigger quarantine |
+| `QUARANTINE_DURATION_SECONDS` | `int` | `14400` | Duration (seconds) a failing setup remains quarantined |
 | `TELEGRAM_TOKEN` | `str` | `""` | *(Optional)* Telegram bot token for trade alerts |
 | `TELEGRAM_CHAT_ID` | `str` | `""` | *(Optional)* Telegram chat ID for trade alerts |
 

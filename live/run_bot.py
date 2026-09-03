@@ -38,6 +38,7 @@ from risk.risk_manager import RiskManager
 from risk.stop_target_logic import StopTargetCalculator
 from execution.order_manager import OrderManager
 from execution.trade_journal import TradeJournal
+from ml.online_learner import OnlineAdaptiveLearner, bootstrap_from_deals_and_journal
 
 # Timeframes to fetch for each symbol on every cycle
 ACTIVE_TIMEFRAMES = ["M15", "H1", "H4", "D1"]
@@ -121,14 +122,28 @@ def main() -> None:
     model_inference = ModelInference()
     confidence_scorer = ConfidenceScorer()
 
+    online_learner = None
+    if getattr(settings, "enable_online_learning", True):
+        online_learner = OnlineAdaptiveLearner(
+            memory_path=getattr(settings, "online_memory_path", "logs/online_memory.json"),
+            quarantine_loss_streak=getattr(settings, "quarantine_loss_streak", 2),
+            quarantine_duration_seconds=getattr(settings, "quarantine_duration_seconds", 14400),
+        )
+
     signal_engine = SignalEngine(
         settings, regime_detector, sr_detector, candle_detector,
         chart_detector, tf_analyzer, session_ctx, model_inference, confidence_scorer,
+        online_learner=online_learner,
     )
 
     position_sizer = PositionSizer(settings.risk_per_trade_pct)
-    stop_calculator = StopTargetCalculator()
-    risk_manager    = RiskManager(settings)
+    stop_calculator = StopTargetCalculator(
+        min_stop_loss_pips=getattr(settings, "min_stop_loss_pips", 12.0),
+    )
+    risk_manager = RiskManager(
+        settings,
+        symbol_cooldown_seconds=getattr(settings, "symbol_cooldown_seconds", 1800),
+    )
     order_manager   = OrderManager(connector, settings)
     journal         = TradeJournal()
 
@@ -143,6 +158,24 @@ def main() -> None:
         risk_manager.reset_daily_stats(account.get("balance", 0.0))
         logger.info("Account balance: {:.2f} {}", account.get("balance", 0.0), account.get("currency", "DEMO"))
 
+        # Cold-start bootstrap for online learner if memory is empty
+        if online_learner is not None:
+            summary = online_learner.get_summary()
+            if summary["total_processed_trades"] == 0:
+                logger.info("Bootstrapping online learner from historical MT5 deal history...")
+                bootstrapped = bootstrap_from_deals_and_journal(online_learner, connector, journal.export_csv())
+                logger.info("Online learner bootstrapped with {} historical trades.", bootstrapped)
+                summary = online_learner.get_summary()
+
+            logger.info(
+                "Online learner ready | Tracked setups: {} | Active quarantines: {} | ML model active: {}",
+                summary["total_tracked_setups"],
+                len(summary["active_quarantines"]),
+                summary["is_clf_fitted"],
+            )
+            if summary["active_quarantines"]:
+                logger.warning("Active quarantines from past performance: {}", list(summary["active_quarantines"].keys()))
+
         try:
             while True:
                 loop_start = datetime.now(timezone.utc)
@@ -151,6 +184,19 @@ def main() -> None:
                 if risk_manager.is_kill_switch_active:
                     logger.critical("Kill switch active — loop halted. Restart bot to resume.")
                     break
+
+                # 1. Sync closed positions from MT5 deal history & update online learner
+                closed_deals = order_manager.sync_closed_positions()
+                for ct in closed_deals:
+                    risk_manager.update_daily_pnl(ct["net_pnl"])
+                    journal.log_trade_closed(ct)
+                    if online_learner is not None:
+                        learner_res = online_learner.on_trade_closed(ct)
+                        logger.info(
+                            "Feedback Loop: Processed closed trade {} | {} {} | PnL: ${:.2f} ({}) | Quarantine: {}",
+                            ct["ticket"], ct["symbol"], ct["direction"], ct["net_pnl"], ct["outcome"],
+                            learner_res.get("quarantine_triggered", False),
+                        )
 
                 open_positions = order_manager.get_open_positions()
 
@@ -208,6 +254,7 @@ def main() -> None:
                         journal.log_order(result, signal)
 
                         if result["success"]:
+                            risk_manager.record_order_opened(symbol)
                             open_positions = order_manager.get_open_positions()  # refresh
 
                     except Exception as exc:

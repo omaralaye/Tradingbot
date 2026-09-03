@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+import numpy as np
 from loguru import logger
 
 from analysis.regime_detection import RegimeType
@@ -80,6 +81,7 @@ class SignalEngine:
         session_ctx,
         model_inference,
         confidence_scorer,
+        online_learner=None,
     ):
         self._settings      = settings
         self._regime        = regime_detector
@@ -90,6 +92,7 @@ class SignalEngine:
         self._session       = session_ctx
         self._inference     = model_inference
         self._scorer        = confidence_scorer
+        self._online_learner = online_learner
 
     def generate_signal(
         self,
@@ -208,6 +211,46 @@ class SignalEngine:
             signal_type = SignalType.SHORT
         else:
             return self._no_trade(symbol, "No dominant direction from TF agreement.", reasoning)
+
+        # Step 8: Online continuous learning adaptive gate
+        if self._online_learner is not None:
+            cand_names = [s.pattern for s in candle_signals] if candle_signals else []
+            h4_reg_str = reasoning["steps"].get("regime_h4", {}).get("regime", "unknown")
+            h1_reg_str = reasoning["steps"].get("regime_h1", {}).get("regime", "unknown")
+            sess_str   = str(session_info.active_sessions)
+            sess_vol   = session_info.volatility_profile
+
+            eval_res = self._online_learner.evaluate_setup(
+                symbol=symbol,
+                direction=signal_type.value,
+                h4_regime=h4_reg_str,
+                h1_regime=h1_reg_str,
+                session=sess_str,
+                session_volatility=sess_vol,
+                patterns=cand_names,
+                confidence=confidence,
+                tf_agreement=tf_agreement.get("agreement_score", 0.67),
+            )
+            reasoning["steps"]["online_learning"] = eval_res.to_dict()
+
+            if not eval_res.is_allowed:
+                return self._no_trade(symbol, f"Online learner veto: {eval_res.reason}", reasoning)
+
+            if eval_res.confidence_multiplier != 1.0:
+                old_conf = confidence
+                confidence = float(np.clip(confidence * eval_res.confidence_multiplier, 0.0, 1.0))
+                reasoning["confidence"] = confidence
+                logger.info(
+                    "Online learner adjusted confidence for {} {}: {:.2f} -> {:.2f} (mult: {:.2f}x, action: {})",
+                    symbol, signal_type.value, old_conf, confidence, eval_res.confidence_multiplier, eval_res.action,
+                )
+
+            if confidence < self._settings.min_signal_confidence:
+                return self._no_trade(
+                    symbol,
+                    f"Confidence {confidence:.2f} after online learner penalty ({eval_res.confidence_multiplier:.2f}x) below threshold {self._settings.min_signal_confidence}.",
+                    reasoning,
+                )
 
         logger.info(
             "Signal generated: {} {} | confidence={:.2f} | regime={} | TF agreement={}",

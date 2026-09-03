@@ -74,6 +74,7 @@ class OrderManager:
         """
         self._connector = connector
         self._settings  = settings
+        self._synced_position_ids: set[int] = set()
 
     # ------------------------------------------------------------------
     # Order placement
@@ -355,6 +356,108 @@ class OrderManager:
         except Exception as exc:
             logger.error("Failed to get account info: {}", exc)
             return {"balance": 0.0, "equity": 0.0, "margin_free": 0.0}
+
+    def sync_closed_positions(self, lookback_seconds: int = 86400 * 7) -> list[dict]:
+        """Query MT5 deal history and return newly closed positions since last check.
+
+        Pairs entry deals (entry=0) with exit deals (entry=1) by position_id.
+        Only returns closed positions that haven't been synced in this session.
+
+        Returns:
+            List of closed position dicts:
+              - ticket: int (position_id)
+              - symbol: str (e.g. 'EURUSD')
+              - broker_symbol: str (e.g. 'EURUSDm')
+              - direction: str ('buy' or 'sell')
+              - volume: float
+              - entry_price: float
+              - exit_price: float
+              - entry_time: float
+              - exit_time: float
+              - profit: float
+              - commission: float
+              - swap: float
+              - net_pnl: float
+              - exit_reason: str (e.g. '[tp 1.15925]' or '[sl 1.16021]')
+              - duration_minutes: float
+              - outcome: str ('win' or 'loss')
+        """
+        if not self._connector.is_connected():
+            return []
+        try:
+            mt5 = self._connector.mt5
+            now = time.time()
+            from_date = now - lookback_seconds
+            to_date = now + 86400
+            deals = mt5.history_deals_get(from_date, to_date)
+            if not deals:
+                return []
+
+            deals_data = [
+                d._asdict() if hasattr(d, "_asdict") else {a: getattr(d, a) for a in dir(d) if not a.startswith("_")}
+                for d in deals
+            ]
+
+            by_pos: dict[int, list[dict]] = {}
+            for d in deals_data:
+                pid = int(d.get("position_id", 0))
+                if pid > 0 and d.get("type") in (ORDER_TYPE_BUY, ORDER_TYPE_SELL):
+                    by_pos.setdefault(pid, []).append(d)
+
+            closed_trades = []
+            for pid, p_deals in by_pos.items():
+                if pid in self._synced_position_ids:
+                    continue
+
+                in_deals = [d for d in p_deals if d.get("entry") == 0]
+                out_deals = [d for d in p_deals if d.get("entry") == 1]
+
+                if not in_deals or not out_deals:
+                    continue
+
+                in_d = in_deals[0]
+                out_d = out_deals[-1]
+                tot_profit = float(sum(d.get("profit", 0.0) for d in out_deals))
+                tot_comm = float(sum(d.get("commission", 0.0) for d in p_deals))
+                tot_swap = float(sum(d.get("swap", 0.0) for d in p_deals))
+                net_pnl = tot_profit + tot_comm + tot_swap
+
+                entry_time = in_d.get("time", 0)
+                exit_time = out_d.get("time", 0)
+                dur_m = max(0.0, (exit_time - entry_time) / 60.0)
+
+                broker_sym = in_d.get("symbol", "")
+                base_sym = broker_sym.rstrip("m").rstrip(".raw").rstrip(".pro") if broker_sym else ""
+
+                trade_info = {
+                    "ticket": pid,
+                    "position_id": pid,
+                    "symbol": base_sym or broker_sym,
+                    "broker_symbol": broker_sym,
+                    "direction": "buy" if in_d.get("type") == ORDER_TYPE_BUY else "sell",
+                    "volume": float(in_d.get("volume", 0.0)),
+                    "entry_price": float(in_d.get("price", 0.0)),
+                    "exit_price": float(out_d.get("price", 0.0)),
+                    "entry_time": entry_time,
+                    "exit_time": exit_time,
+                    "profit": round(tot_profit, 2),
+                    "commission": round(tot_comm, 2),
+                    "swap": round(tot_swap, 2),
+                    "net_pnl": round(net_pnl, 2),
+                    "exit_reason": out_d.get("comment", ""),
+                    "duration_minutes": round(dur_m, 1),
+                    "outcome": "win" if net_pnl > 0.0 else "loss",
+                }
+
+                self._synced_position_ids.add(pid)
+                closed_trades.append(trade_info)
+
+            if closed_trades:
+                logger.info("OrderManager: Synced {} newly closed position(s).", len(closed_trades))
+            return closed_trades
+        except Exception as exc:
+            logger.error("Failed to sync closed positions: {}", exc)
+            return []
 
     # ------------------------------------------------------------------
     # Helpers

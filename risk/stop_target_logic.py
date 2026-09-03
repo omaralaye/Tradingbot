@@ -36,6 +36,7 @@ class StopTargetCalculator:
         atr_tp_multiplier: float = 2.5,
         use_structure:     bool  = True,
         max_sr_distance_atr: float = 3.0,  # max ATR multiples to look for S/R
+        min_stop_loss_pips: float = 12.0,  # min SL floor in pips
     ):
         """
         Args:
@@ -43,11 +44,13 @@ class StopTargetCalculator:
             atr_tp_multiplier:     TP = price ± (ATR * this) for ATR-based TP.
             use_structure:         Prefer structure-based SL over ATR when possible.
             max_sr_distance_atr:   Ignore S/R levels further than this many ATR units.
+            min_stop_loss_pips:    Minimum SL distance in pips to prevent spread chop stop-outs.
         """
-        self._atr_sl  = atr_sl_multiplier
-        self._atr_tp  = atr_tp_multiplier
-        self._use_sr  = use_structure
-        self._max_sr  = max_sr_distance_atr
+        self._atr_sl       = atr_sl_multiplier
+        self._atr_tp       = atr_tp_multiplier
+        self._use_sr       = use_structure
+        self._max_sr       = max_sr_distance_atr
+        self._min_sl_pips  = min_stop_loss_pips
 
     def calculate_sl_tp(
         self,
@@ -90,8 +93,16 @@ class StopTargetCalculator:
         if sl_price is None:
             sl_price = self._atr_sl_price(is_long, current_price, atr)
 
-        tp_price    = self._calculate_tp(is_long, current_price, sl_price)
         sl_distance = abs(current_price - sl_price)
+
+        # Enforce minimum stop-loss distance floor to prevent tight spread stop-outs
+        pip_size = 0.01 if "JPY" in signal.symbol.upper() else 0.0001
+        min_sl_dist = self._min_sl_pips * pip_size
+        if sl_distance < min_sl_dist:
+            sl_distance = min_sl_dist
+            sl_price = (current_price - sl_distance) if is_long else (current_price + sl_distance)
+
+        tp_price    = self._calculate_tp(is_long, current_price, sl_price)
         tp_distance = abs(tp_price - current_price)
         rr          = tp_distance / sl_distance if sl_distance > 0 else 0.0
 

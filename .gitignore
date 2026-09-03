@@ -37,6 +37,7 @@ data/cache/*.csv
 # Logs & journal
 logs/*.log
 logs/*.csv
+logs/*.json
 
 # ML registry (large binary files)
 ml/registry/*.pkl

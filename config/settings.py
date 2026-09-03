@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_dir: str = "logs"
 
+    # --- Online Continuous Learning ---
+    enable_online_learning: bool = True
+    online_memory_path: str = "logs/online_memory.json"
+    symbol_cooldown_seconds: int = 1800       # 30 min cooldown between orders on same symbol
+    min_stop_loss_pips: float = 12.0          # min SL floor to avoid tight chop stop-outs
+    quarantine_loss_streak: int = 2           # consecutive losses to trigger setup quarantine
+    quarantine_duration_seconds: int = 14400  # 4 hours quarantine
+
     # --- Optional alerting ---
     telegram_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None

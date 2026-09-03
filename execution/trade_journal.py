@@ -100,6 +100,41 @@ class TradeJournal:
         }
         self._append_row(row)
 
+    def log_trade_closed(self, closed_trade: dict) -> None:
+        """Log a closed trade with realized PnL and outcome.
+
+        Args:
+            closed_trade: Dict from OrderManager.sync_closed_positions().
+        """
+        exit_time = closed_trade.get("exit_time")
+        if exit_time:
+            ts = datetime.fromtimestamp(exit_time, tz=timezone.utc).isoformat()
+        else:
+            ts = datetime.now(timezone.utc).isoformat()
+
+        direction = str(closed_trade.get("direction", "")).upper()
+        sig_val = "LONG" if direction in ("BUY", "LONG") else ("SHORT" if direction in ("SELL", "SHORT") else "")
+        row = {
+            "timestamp":    ts,
+            "symbol":       closed_trade.get("symbol", ""),
+            "timeframe":    closed_trade.get("timeframe", "H1"),
+            "signal":       sig_val,
+            "action":       "trade_closed",
+            "order_ticket": str(closed_trade.get("ticket", "")),
+            "entry_price":  str(closed_trade.get("entry_price", "")),
+            "stop_loss":    str(closed_trade.get("stop_loss", "")),
+            "take_profit":  str(closed_trade.get("take_profit", "")),
+            "outcome":      closed_trade.get("outcome", ""),
+            "pnl":          str(closed_trade.get("net_pnl", "")),
+            "skip_reason":  closed_trade.get("exit_reason", ""),
+            "reasoning_json": json.dumps(closed_trade, default=str),
+        }
+        self._append_row(row)
+        logger.info(
+            "TradeJournal: Logged trade_closed | ticket={} | {} {} | PnL: ${} ({}) | {}",
+            row["order_ticket"], row["symbol"], sig_val, row["pnl"], row["outcome"], row["skip_reason"],
+        )
+
     def log_no_trade(
         self,
         symbol:     str,

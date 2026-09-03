@@ -13,6 +13,7 @@ are optionally flattened via a registered callback.
 
 from __future__ import annotations
 
+import time
 from datetime import date
 from typing import Callable, Optional
 
@@ -43,6 +44,7 @@ class RiskManager:
         max_daily_loss_pct:       Optional[float] = None,
         max_open_positions:       Optional[int]   = None,
         max_correlated_positions: int             = 3,
+        symbol_cooldown_seconds:  Optional[int]   = None,
     ):
         """
         Args:
@@ -50,11 +52,18 @@ class RiskManager:
             max_daily_loss_pct:        Override settings value if provided.
             max_open_positions:        Override settings value if provided.
             max_correlated_positions:  Max positions in same correlated group.
+            symbol_cooldown_seconds:   Min seconds between orders on same symbol.
         """
         self._settings         = settings
         self._max_daily_loss   = max_daily_loss_pct or settings.max_daily_loss_pct
         self._max_positions    = max_open_positions or settings.max_open_positions
         self._max_correlated   = max_correlated_positions
+        self._symbol_cooldown  = (
+            symbol_cooldown_seconds
+            if symbol_cooldown_seconds is not None
+            else getattr(settings, "symbol_cooldown_seconds", 1800)
+        )
+        self._last_order_time_by_symbol: dict[str, float] = {}
 
         self._kill_switch_active  = False
         self._kill_switch_reason: Optional[str] = None
@@ -111,7 +120,23 @@ class RiskManager:
                 f"{correlated_count}/{self._max_correlated}"
             )
 
+        # 5. Symbol cooldown to avoid rapid duplicate orders
+        last_order = self._last_order_time_by_symbol.get(symbol)
+        if last_order is not None:
+            elapsed = time.time() - last_order
+            if elapsed < self._symbol_cooldown:
+                remaining_m = (self._symbol_cooldown - elapsed) / 60.0
+                return False, (
+                    f"Symbol cooldown active for {symbol}: "
+                    f"{remaining_m:.1f}m remaining before next order allowed."
+                )
+
         return True, ""
+
+    def record_order_opened(self, symbol: str) -> None:
+        """Record timestamp when an order is opened to enforce symbol cooldown."""
+        self._last_order_time_by_symbol[symbol] = time.time()
+        logger.debug("RiskManager: Recorded order opened for {} (cooldown: {}s)", symbol, self._symbol_cooldown)
 
     # ------------------------------------------------------------------
     # Kill switch
